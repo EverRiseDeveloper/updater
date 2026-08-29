@@ -1,0 +1,8 @@
+# https://developers.home-assistant.io/docs/apps/repository#repository-configuration
+# Required at the repo root for Home Assistant Supervisor to recognize this as a
+# valid add-on repository at all — without this file, "Add repository" fails with
+# "is not a valid app repository" and the add-on itself is never reachable,
+# regardless of how correct config.yaml/Dockerfile/run.sh are.
+name: EverRise Add-ons
+url: 'https://github.com/EverRiseDeveloper/updater'
+maintainer: EverRise Developer
