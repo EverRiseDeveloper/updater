@@ -1,0 +1,37 @@
+---
+name: EverRise Auto Updater
+version: "1.0.0"
+slug: everrise_updater
+description: >-
+  Polls the EverRise dashboard frontend and backend bridge repos on GitHub
+  and deploys whatever's new — no HACS, no manual re-provisioning. The
+  frontend repo holds a pre-built dist folder deployed straight into
+  www/; the backend repo is the everrise_dashboard custom component,
+  deployed into custom_components/ with one Core restart when it changes.
+url: https://github.com/EverRiseDeveloper/updater
+arch:
+  - aarch64
+  - amd64
+  - armv7
+startup: application
+boot: auto
+init: false
+# Only what's actually needed: the real HA config folder (to write into
+# www/ and custom_components/), and the Core API (to trigger a restart
+# after a backend update — see run.sh's restart_core). hassio_api isn't
+# requested since nothing here talks to Supervisor directly.
+homeassistant_api: true
+map:
+  - homeassistant_config:rw
+options:
+  frontend_repo: "https://github.com/EverRiseDeveloper/dashboard-dist"
+  frontend_folder: "everrise-dashboard"
+  backend_repo: "https://github.com/EverRiseDeveloper/dashboard-bridge"
+  backend_domain: "everrise_dashboard"
+  poll_interval_seconds: 3600
+schema:
+  frontend_repo: url
+  frontend_folder: str
+  backend_repo: url
+  backend_domain: str
+  poll_interval_seconds: int(60,86400)
