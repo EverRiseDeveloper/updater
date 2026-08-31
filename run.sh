@@ -43,14 +43,37 @@ HA_CONFIG=/homeassistant
 
 restart_core() {
   bashio::log.info "Restarting Home Assistant Core to load new ${BACKEND_DOMAIN} code..."
-  if curl -sf -X POST \
+  # [Found on a real live run] Core tears down its own HTTP server mid-response
+  # as part of honoring this exact restart request — curl seeing a dropped/
+  # reset connection here is the NORMAL outcome of a successful trigger, not
+  # evidence the restart failed. The provisioner's own restartCore() (in the
+  # provisioner tool's haClient.js) hit this identical thing and had to stop
+  # trusting the POST's own success/failure for the same reason. So this
+  # doesn't branch on curl's exit code at all — it always falls through to
+  # polling Core itself to find out what actually happened, the same way
+  # waitForCoreReady does there.
+  curl -sf -X POST \
     -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
     -H "Content-Type: application/json" \
-    http://supervisor/core/api/services/homeassistant/restart >/dev/null; then
-    bashio::log.info "Restart triggered."
-  else
-    bashio::log.warning "Restart call failed — restart Home Assistant by hand to pick up the new backend code."
-  fi
+    http://supervisor/core/api/services/homeassistant/restart >/dev/null 2>&1 || true
+
+  # [BEST-GUESS on timing, matching waitForCoreReady's own comment there] A
+  # 200 or 401 both mean Core is answering again (401 just means it wants a
+  # fresh token) — a network error or 5xx means it's still coming back.
+  local waited=0
+  local status
+  while [ "$waited" -lt 120 ]; do
+    sleep 3
+    waited=$((waited + 3))
+    status=$(curl -s -o /dev/null -w '%{http_code}' \
+      -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+      http://supervisor/core/api/ 2>/dev/null || echo "000")
+    if [ "$status" = "200" ] || [ "$status" = "401" ]; then
+      bashio::log.info "Restart confirmed — Home Assistant Core is back up."
+      return
+    fi
+  done
+  bashio::log.warning "Home Assistant didn't answer again within 120s of the restart call — check Settings > System > Restart by hand if the new ${BACKEND_DOMAIN} code doesn't seem to have taken effect."
 }
 
 # $1 name (for logging)   $2 repo URL   $3 marker file   $4 destination dir
