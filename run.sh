@@ -1,30 +1,40 @@
 #!/usr/bin/with-contenv bashio
-# EverRise Auto Updater — polls two GitHub repos on a schedule and deploys
-# whatever's new, straight from inside the client's own box. This container
-# pulls FROM GitHub outward, so unlike the provisioner tool's own "Add more"
-# push, there's no dependency on Hakim's Mac (or Tailscale) being reachable
-# for an update to land — the only requirement is this box's own normal
-# internet access, same as any other add-on already needs.
+# EverRise Auto Updater — polls the backend bridge repo on GitHub on a
+# schedule and deploys whatever's new, straight from inside the client's own
+# box. This container pulls FROM GitHub outward, so unlike the provisioner
+# tool's own "Add more" push, there's no dependency on Hakim's Mac (or
+# Tailscale) being reachable for an update to land — the only requirement
+# is this box's own normal internet access, same as any other add-on
+# already needs.
 #
-# Frontend (dist-only repo, repo root IS the built app — no subfolder to
-# extract) deploys straight into www/<folder>/, no restart: Home Assistant
-# just serves whatever's on disk under www/ on the next request, and
-# Vite's hashed asset filenames handle browser cache-busting on their own.
+# Backend only, as of this version — the everrise_dashboard custom
+# component's real source repo needs its custom_components/<domain>/
+# subtree extracted specifically (same convention the provisioner's own
+# customComponentInstaller.js uses for the initial install, so both
+# mechanisms treat this repo identically), and needs one Core restart
+# afterward, since Core only scans custom_components/ at startup.
 #
-# Backend (the everrise_dashboard custom component's real source repo)
-# needs its custom_components/<domain>/ subtree extracted specifically —
-# same convention the provisioner's own customComponentInstaller.js uses
-# for the initial install, so both mechanisms treat this repo identically
-# — and needs one Core restart afterward, since Core only scans
-# custom_components/ at startup.
+# Frontend deploys used to run from here too (a straight rsync into
+# www/<folder>/ on the same POLL_INTERVAL, no restart needed). Removed
+# because the bridge integration itself now ships its own frontend Update
+# entity (update.dashboard_frontend, see update.py in the bridge repo) that
+# polls every 15 minutes — much tighter than this add-on's hourly default —
+# and having both meant every frontend build was being fetched twice on two
+# independent schedules for no benefit. The bridge's own entity is now the
+# single frontend update path; this add-on only ever touches the backend.
+#
+# frontend_repo/frontend_folder are kept in config.yaml's schema (unused
+# here) purely so existing clients whose options already set them don't hit
+# a schema-validation error on upgrade — bashio::config still reads them
+# below for the same reason, they're just never acted on.
 #
 # [CONFIRMED via developers.home-assistant.io/docs/apps/communication]
 # SUPERVISOR_TOKEN is injected into every add-on's environment automatically
 # — no credential ever needs to be configured here for the restart call.
 set -euo pipefail
 
-FRONTEND_REPO=$(bashio::config 'frontend_repo')
-FRONTEND_FOLDER=$(bashio::config 'frontend_folder')
+FRONTEND_REPO=$(bashio::config 'frontend_repo')       # unused — see header comment
+FRONTEND_FOLDER=$(bashio::config 'frontend_folder')    # unused — see header comment
 BACKEND_REPO=$(bashio::config 'backend_repo')
 BACKEND_DOMAIN=$(bashio::config 'backend_domain')
 POLL_INTERVAL=$(bashio::config 'poll_interval_seconds')
@@ -43,23 +53,11 @@ HA_CONFIG=/homeassistant
 
 restart_core() {
   bashio::log.info "Restarting Home Assistant Core to load new ${BACKEND_DOMAIN} code..."
-  # [Found on a real live run] Core tears down its own HTTP server mid-response
-  # as part of honoring this exact restart request — curl seeing a dropped/
-  # reset connection here is the NORMAL outcome of a successful trigger, not
-  # evidence the restart failed. The provisioner's own restartCore() (in the
-  # provisioner tool's haClient.js) hit this identical thing and had to stop
-  # trusting the POST's own success/failure for the same reason. So this
-  # doesn't branch on curl's exit code at all — it always falls through to
-  # polling Core itself to find out what actually happened, the same way
-  # waitForCoreReady does there.
   curl -sf -X POST \
     -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
     -H "Content-Type: application/json" \
     http://supervisor/core/api/services/homeassistant/restart >/dev/null 2>&1 || true
 
-  # [BEST-GUESS on timing, matching waitForCoreReady's own comment there] A
-  # 200 or 401 both mean Core is answering again (401 just means it wants a
-  # fresh token) — a network error or 5xx means it's still coming back.
   local waited=0
   local status
   while [ "$waited" -lt 120 ]; do
@@ -123,16 +121,9 @@ check_and_pull() {
   rm -rf "$tmp_dir"
 }
 
-bashio::log.info "EverRise Auto Updater starting — checking every ${POLL_INTERVAL}s"
+bashio::log.info "EverRise Auto Updater starting — checking the backend bridge every ${POLL_INTERVAL}s (frontend updates are now handled by the bridge's own Update entity, not this add-on)"
 
 while true; do
-  check_and_pull "Frontend dashboard" \
-    "$FRONTEND_REPO" \
-    "${STATE_DIR}/frontend-commit" \
-    "${HA_CONFIG}/www/${FRONTEND_FOLDER}" \
-    "" \
-    "false"
-
   check_and_pull "Dashboard bridge (backend)" \
     "$BACKEND_REPO" \
     "${STATE_DIR}/backend-commit" \
